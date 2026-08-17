@@ -2,4 +2,14 @@
 set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+# The installed supervisor and interactive shells can race to start the same
+# cluster. Treat an already healthy managed router as success instead of
+# launching a second cluster that dies with EADDRINUSE on an earlier port.
+if command -v curl >/dev/null 2>&1 \
+  && curl -fsS -m 2 "${CODEX_ROUTER_HEALTH_URL:-http://127.0.0.1:4102/health}" 2>/dev/null \
+    | grep -q '"ok":true'; then
+  exit 0
+fi
+
 exec node "$repo_dir/src/start.mjs"
