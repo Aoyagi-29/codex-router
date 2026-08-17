@@ -607,6 +607,27 @@ async function handlePresence(action, value) {
   process.stdout.write(`${JSON.stringify(setPresenceMode(value))}\n`);
 }
 
+async function handleToolResultAging(action, value) {
+  const {
+    setToolResultAgingEnabled,
+    toolResultAgingSnapshot,
+  } = await import("./tool-result-aging-state.mjs");
+  if (action === "native" || value === "native") {
+    throw new Error(
+      "Tool-result aging is installed for routed-external only; native scope is unavailable.",
+    );
+  }
+  if (!action || action === "status") {
+    process.stdout.write(`${JSON.stringify(toolResultAgingSnapshot())}\n`);
+    return;
+  }
+  if (!["on", "off"].includes(action)) {
+    throw new Error("Usage: control tool-result-aging status|on|off (routed-external only)");
+  }
+  setToolResultAgingEnabled(action === "on");
+  process.stdout.write(`${JSON.stringify(toolResultAgingSnapshot())}\n`);
+}
+
 // --- dispatch ---------------------------------------------------------------
 
 if (args.includes("--probe")) {
@@ -651,6 +672,8 @@ if (args.includes("--probe")) {
   handleTray(args[1]);
 } else if (args[0] === "presence") {
   await handlePresence(args[1], args[2]);
+} else if (args[0] === "tool-result-aging") {
+  await handleToolResultAging(args[1], args[2]);
 } else if (args[0] === "maintenance") {
   await updateAndVerifyCodex();
 } else if (args[0] === "doctor") {

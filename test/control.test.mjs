@@ -488,3 +488,33 @@ test("aggregate overview covers every target", () => {
   const overview = JSON.parse(output);
   assert.deepEqual(Object.keys(overview.targets).sort(), ["codex"]);
 });
+
+test("control toggles routed-external tool-result aging and rejects native scope", () => {
+  const stateDir = mkdtempSync(path.join("/tmp", "control-routed-tool-aging-"));
+  const environment = {
+    ...process.env,
+    MODEL_ROUTER_TARGET: "codex",
+    MODEL_ROUTER_STATE_DIR: stateDir,
+  };
+  delete environment.CODEX_ROUTER_TOOL_RESULT_AGING;
+  const runControl = (...commandArgs) =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [path.join(root, "src", "control.mjs"), "tool-result-aging", ...commandArgs],
+        { cwd: root, encoding: "utf8", env: environment },
+      ),
+    );
+
+  try {
+    assert.equal(runControl("status").enabled, false);
+    const enabled = runControl("on");
+    assert.equal(enabled.enabled, true);
+    assert.equal(enabled.scope, "routed-external");
+    assert.equal(enabled.nativeEnabled, false);
+    assert.equal(runControl("off").enabled, false);
+    assert.throws(() => runControl("native", "on"), /routed-external only/);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});

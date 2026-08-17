@@ -2069,3 +2069,87 @@ test("router strips empty text parts and drops the messages left with nothing", 
     await closeServer(native.server);
   }
 });
+
+test("tool-result aging applies to routed external requests only and the off switch restores replay", async () => {
+  const gatewayBodies = [];
+  const nativeBodies = [];
+  const gateway = await mockServer(async (request, response) => {
+    if (request.method === "GET") {
+      json(response, 200, { ok: true });
+      return;
+    }
+    gatewayBodies.push(await bodyJson(request));
+    json(response, 200, { output: [{ type: "message", role: "assistant", content: "ok" }] });
+  });
+  const native = await mockServer(async (request, response) => {
+    nativeBodies.push(await bodyJson(request));
+    json(response, 200, { output: [{ type: "message", role: "assistant", content: "ok" }] });
+  });
+  const stateDir = mkdtempSync(path.join("/tmp", "routing-routed-tool-aging-"));
+  const statePath = path.join(stateDir, "tool-result-aging.json");
+  writeFileSync(
+    statePath,
+    `${JSON.stringify({ version: 1, enabled: true, scope: "routed-external" })}\n`,
+    { mode: 0o600 },
+  );
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}`,
+    CODEX_ROUTER_OAUTH_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_API_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_GATEWAY_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_QUIET: "1",
+    MODEL_ROUTER_STATE_DIR: stateDir,
+  });
+  const large = `old-head\n${"old-middle\n".repeat(4_000)}old-tail`;
+  const input = [
+    { type: "function_call", call_id: "old", name: "exec_command", arguments: "{}" },
+    { type: "function_call_output", call_id: "old", output: large },
+    { type: "message", role: "assistant", content: "I acted on the old result." },
+    ...Array.from({ length: 4 }, (_, index) => [
+      { type: "function_call", call_id: `new-${index}`, name: "exec_command", arguments: "{}" },
+      { type: "function_call_output", call_id: `new-${index}`, output: `${index}:${"n".repeat(34_000)}` },
+      { type: "message", role: "assistant", content: `used ${index}` },
+    ]).flat(),
+  ];
+  const send = (model) =>
+    fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, stream: false, input }),
+    });
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const routedOn = await send("opencode-go/deepseek-v4-flash");
+    assert.equal(routedOn.status, 200, await routedOn.text());
+    assert.match(gatewayBodies[0].input[1].output, /Older tool result compacted/);
+    assert.match(gatewayBodies[0].input[1].output, /old-head/);
+    assert.match(gatewayBodies[0].input[1].output, /old-tail/);
+    for (let index = 0; index < 4; index += 1) {
+      const recent = gatewayBodies[0].input.find(
+        (item) => item.type === "function_call_output" && item.call_id === `new-${index}`,
+      );
+      assert.equal(recent.output, `${index}:${"n".repeat(34_000)}`);
+    }
+
+    const nativeResponse = await send("gpt-5.6-sol");
+    assert.equal(nativeResponse.status, 200, await nativeResponse.text());
+    assert.equal(nativeBodies[0].input[1].output, large);
+
+    writeFileSync(
+      statePath,
+      `${JSON.stringify({ version: 1, enabled: false, scope: "routed-external" })}\n`,
+      { mode: 0o600 },
+    );
+    const routedOff = await send("opencode-go/deepseek-v4-flash");
+    assert.equal(routedOff.status, 200, await routedOff.text());
+    assert.equal(gatewayBodies[1].input[1].output, large);
+  } finally {
+    await stopChild(router);
+    await Promise.all([closeServer(gateway.server), closeServer(native.server)]);
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});

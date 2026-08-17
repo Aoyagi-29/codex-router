@@ -31,6 +31,8 @@ import { canonicalProviderId, readProviderSelection } from "./provider-selection
 import { ResponseUsageTransform } from "./response-usage.mjs";
 import { activityMetadataFromHeaders } from "./codex-session-names.mjs";
 import { recordUsageEvent } from "./usage-events.mjs";
+import { ageToolResults } from "./tool-result-aging.mjs";
+import { toolResultAgingEnabled } from "./tool-result-aging-state.mjs";
 import { VERSION } from "./version.mjs";
 
 const LISTEN_HOST =
@@ -921,11 +923,14 @@ async function handleResponses(request, response, requestUrl) {
     let headers;
     let routedBody;
     if (route) {
-      const input = await normalizeRoutedAgentInput(
+      const normalizedInput = await normalizeRoutedAgentInput(
         request,
         payload.input,
         controller.signal,
       );
+      const { input } = ageToolResults(normalizedInput, {
+        enabled: toolResultAgingEnabled(),
+      });
       const routed = {
         ...payload,
         model: route.gatewayModel,
