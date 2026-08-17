@@ -1312,6 +1312,8 @@ test("API forwarder synthesizes missing tool results for incomplete tool_calls h
     assert.equal(messages[0].role, "user");
     assert.equal(messages[1].role, "assistant");
     assert.deepEqual(messages[1].tool_calls, toolCalls);
+    assert.equal(messages[1].reasoning_content, "");
+    assert.equal(messages[1].tool_calls[0].function.arguments, '{"cmd":"ls"}');
     assert.equal(messages[2].role, "tool");
     assert.equal(messages[2].tool_call_id, "call_A");
     assert.equal(messages[2].content, "done");
@@ -1321,6 +1323,60 @@ test("API forwarder synthesizes missing tool results for incomplete tool_calls h
     assert.equal(messages[4].role, "user");
     assert.equal(messages[4].content, "what next?");
     assert.equal(messages.length, 5);
+  } finally {
+    await stopChild(forwarder);
+    await closeServer(upstream.server);
+  }
+});
+
+test("API forwarder repairs DeepSeek V4 thinking history and malformed tool arguments", async () => {
+  const upstreamRequests = [];
+  const upstream = await mockServer(async (request, response) => {
+    upstreamRequests.push({ body: await bodyJson(request) });
+    json(response, 200, { choices: [] });
+  });
+  const forwarderPort = await openPort();
+  const forwarder = run("api-forwarder.mjs", {
+    CODEX_ROUTER_API_PORT: String(forwarderPort),
+    OPENCODE_GO_BASE_URL: `http://127.0.0.1:${upstream.port}/v1`,
+    OPENCODE_GO_API_KEY: "TEST_OPENCODE_GO_KEY",
+    CODEX_ROUTER_QUIET: "1",
+  });
+
+  try {
+    await waitFor(`http://127.0.0.1:${forwarderPort}/health`, forwarder, {
+      Authorization: `Bearer ${INTERNAL_KEY}`,
+    });
+    const malformedToolCall = {
+      id: "call_bad_args",
+      type: "function",
+      function: {
+        name: "exec_command",
+        arguments: '{"cmd":"printf \'unterminated}',
+      },
+    };
+    const response = await fetch(
+      `http://127.0.0.1:${forwarderPort}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${INTERNAL_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "opencode-go-deepseek-v4-flash",
+          messages: [
+            { role: "user", content: "continue" },
+            { role: "assistant", tool_calls: [malformedToolCall] },
+            { role: "tool", tool_call_id: "call_bad_args", content: "done" },
+          ],
+        }),
+      },
+    );
+    assert.equal(response.status, 200);
+    const message = upstreamRequests[0].body.messages[1];
+    assert.equal(message.reasoning_content, "");
+    assert.equal(message.tool_calls[0].function.arguments, "{}");
   } finally {
     await stopChild(forwarder);
     await closeServer(upstream.server);

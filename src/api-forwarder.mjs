@@ -186,6 +186,62 @@ function sanitizeChatToolHistory(messages) {
   return ensureToolResultsForCalls(coalesceAssistantMessages(messages));
 }
 
+function normalizeToolArguments(value) {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? value : "{}";
+    } catch {
+      return "{}";
+    }
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "{}";
+    }
+  }
+  return "{}";
+}
+
+function sanitizeDeepSeekThinkingHistory(messages) {
+  if (!Array.isArray(messages)) return messages;
+  return messages.map((message) => {
+    if (message?.role !== "assistant") return message;
+    const hasToolState =
+      Array.isArray(message.tool_calls) || typeof message.tool_call_id === "string";
+    if (!hasToolState) return message;
+
+    const normalized = { ...message };
+    if (normalized.reasoning_content === undefined || normalized.reasoning_content === null) {
+      // DeepSeek V4 rejects a thinking-mode continuation when a prior assistant
+      // tool turn omits this field. LiteLLM's Responses bridge currently drops
+      // standalone Responses `reasoning` items, so an empty field is the safe
+      // compatibility value when the plaintext chain is unavailable.
+      normalized.reasoning_content = "";
+    }
+    if (Array.isArray(normalized.tool_calls)) {
+      normalized.tool_calls = normalized.tool_calls.map((toolCall) => {
+        if (!toolCall || typeof toolCall !== "object") return toolCall;
+        const functionCall = toolCall.function;
+        if (!functionCall || typeof functionCall !== "object") return toolCall;
+        return {
+          ...toolCall,
+          function: {
+            ...functionCall,
+            // Console Go reparses historical tool arguments. A truncated or
+            // otherwise malformed argument string must not poison the next
+            // thinking turn with a provider-side JSON decoder 400.
+            arguments: normalizeToolArguments(functionCall.arguments),
+          },
+        };
+      });
+    }
+    return normalized;
+  });
+}
+
 function normalizeBody(buffer, contentType, route) {
   if (!buffer.length || !String(contentType || "").includes("application/json")) {
     const error = new Error("API-provider requests require a JSON body.");
@@ -225,6 +281,9 @@ function normalizeBody(buffer, contentType, route) {
   payload.model = model.upstreamModel;
   if (Array.isArray(payload.messages)) {
     payload.messages = sanitizeChatToolHistory(payload.messages);
+    if (String(model.upstreamModel || "").toLowerCase().startsWith("deepseek-v4")) {
+      payload.messages = sanitizeDeepSeekThinkingHistory(payload.messages);
+    }
   }
   if (model.requestProfile === "kimi-k3") {
     const effort = kimiK3Effort(payload.reasoning_effort);
