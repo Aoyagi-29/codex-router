@@ -12,7 +12,7 @@ config_manager=src/config-manager.mjs
 node src/provider-selection.mjs ensure-configured >/dev/null
 node src/secret.mjs ensure
 node src/catalog.mjs
-node src/litellm-config.mjs
+node src/gateway-config.mjs
 rollback() {
   node src/service.mjs uninstall >/dev/null 2>&1 || true
   node "$config_manager" disable >/dev/null 2>&1 || true

@@ -7,7 +7,6 @@ import test from "node:test";
 import {
   PYTHON_REQUIREMENTS,
   installedDistributionVersion,
-  installerRequirementDrift,
   recordStep,
   requirementParts,
   stepStatus,
@@ -113,7 +112,7 @@ test("distribution lookup normalizes names and ignores extras", () => {
   }
 });
 
-test("both installers pin the same LiteLLM and FastAPI versions", () => {
+test("legacy Python requirement helpers retain their pinned distributions", () => {
   assert.equal(PYTHON_REQUIREMENTS.length, 2);
-  assert.deepEqual(installerRequirementDrift(), []);
+  assert.deepEqual(PYTHON_REQUIREMENTS, ["litellm[proxy]==1.95.0", "fastapi==0.139.2"]);
 });

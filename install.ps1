@@ -174,41 +174,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Recording the Node dependency state failed." }
   }
 
-  $Python = Join-Path $ScriptDirectory ".venv\Scripts\python.exe"
-  if ((Get-InstallStep "python-deps") -eq "skip") {
-    Write-Host "LiteLLM already matches the pinned versions; skipping the Python install."
-  } elseif (Get-Command "uv" -ErrorAction SilentlyContinue) {
-    if (-not (Test-Path $Python)) {
-      & uv venv --python 3.12 .venv
-      if ($LASTEXITCODE -ne 0) { throw "uv could not create the Python environment." }
-    }
-    # litellm 1.95.0 needs fastapi<0.140 (get_flat_dependant was removed);
-    # re-test before lifting either pin. src/install-plan.mjs holds the same
-    # pins and its test fails when only one copy moves.
-    & uv pip install --python $Python "litellm[proxy]==1.95.0" "fastapi==0.139.2"
-    if ($LASTEXITCODE -ne 0) { throw "LiteLLM installation failed." }
-    & node src/install-plan.mjs record python-deps
-    if ($LASTEXITCODE -ne 0) { throw "Recording the Python dependency state failed." }
-  } else {
-    if (Get-Command "py" -ErrorAction SilentlyContinue) {
-      & py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
-      if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
-      if (-not (Test-Path $Python)) { & py -3 -m venv .venv }
-    } elseif (Get-Command "python" -ErrorAction SilentlyContinue) {
-      & python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
-      if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
-      if (-not (Test-Path $Python)) { & python -m venv .venv }
-    } else {
-      throw "Python 3.10+ or uv is required. Install uv from https://docs.astral.sh/uv/."
-    }
-    if (-not (Test-Path $Python)) { throw "The Python virtual environment was not created." }
-    & $Python -m pip install --upgrade pip
-    if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
-    & $Python -m pip install "litellm[proxy]==1.95.0" "fastapi==0.139.2"
-    if ($LASTEXITCODE -ne 0) { throw "LiteLLM installation failed." }
-    & node src/install-plan.mjs record python-deps
-    if ($LASTEXITCODE -ne 0) { throw "Recording the Python dependency state failed." }
-  }
+  & node src/gateway-build.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Rust gateway build failed." }
 
   & node src/secret.mjs ensure
   if ($LASTEXITCODE -ne 0) { throw "Local router-key setup failed." }
@@ -224,7 +191,7 @@ try {
     }
     if ($LASTEXITCODE -ne 0) { throw "Codex model-catalog generation failed." }
   }
-  & node src/litellm-config.mjs
+  & node src/gateway-config.mjs
   if ($LASTEXITCODE -ne 0) { throw "Gateway configuration generation failed." }
 
   if ($PrepareOnly) {

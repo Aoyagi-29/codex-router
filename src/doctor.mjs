@@ -10,6 +10,7 @@ import { grokCliPreflight } from "./grok-cli.mjs";
 import { detectLegacyInstallations } from "./legacy-migration.mjs";
 import { PROVIDERS } from "./model-registry.mjs";
 import { grokOAuthStatus } from "./grok-oauth-status.mjs";
+import { gatewayBinaryPath, gatewayConfigPath } from "./gateway-config.mjs";
 import { kimiOAuthStatus } from "./oauth-status.mjs";
 import { readMultiAgentSettings } from "./multi-agent-state.mjs";
 import { readHiddenModels } from "./model-picker-state.mjs";
@@ -20,10 +21,10 @@ import {
   CODEX_AGENTS_DIR,
   CONFIG_PATH,
   INTERNAL_SECRET_PATH,
-  LITELLM_CONFIG_PATH,
   MERGED_CATALOG_PATH,
   PORTS,
   SOURCE_ROOT,
+  loopback,
 } from "./paths.mjs";
 import { credentialStatus } from "./provider-credentials.mjs";
 import { stateOwnershipStatus } from "./state-owner.mjs";
@@ -52,6 +53,40 @@ function childJson(script, args = []) {
       stdio: ["ignore", "pipe", "ignore"],
     }),
   );
+}
+
+async function gatewayHealthStatus(timeoutMs = 2_000) {
+  let internalKey;
+  try {
+    internalKey = readFileSync(INTERNAL_SECRET_PATH, "utf8").trim();
+  } catch {
+    return { ok: false, error: "internal service key could not be read" };
+  }
+  if (!internalKey) return { ok: false, error: "internal service key is empty" };
+
+  try {
+    const response = await fetch(
+      loopback(PORTS.gateway, "/health/liveliness"),
+      {
+        headers: { Authorization: `Bearer ${internalKey}` },
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+    );
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
+    if (
+      payload?.service !== "codex-router-gateway" ||
+      payload?.backend !== "rust"
+    ) {
+      return { ok: false, error: "unexpected Rust gateway health response" };
+    }
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function repair() {
@@ -250,15 +285,21 @@ add(
     : ownership.owner || "unowned (first install)",
   "Run router commands from the owning checkout, or reinstall from this one to take ownership.",
 );
-let unroutable = [];
+let gatewayModels = [];
+let gatewayConfigValid = false;
 try {
-  const rendered = readFileSync(LITELLM_CONFIG_PATH, "utf8");
-  unroutable = requiredRoutedModels
-    .filter((model) => !rendered.includes(`model_name: "${model.gatewayModel}"`))
-    .map((model) => model.slug);
+  const parsed = JSON.parse(readFileSync(gatewayConfigPath, "utf8"));
+  gatewayModels = Array.isArray(parsed.models) ? parsed.models : [];
+  gatewayConfigValid = gatewayModels.every(
+    (model) => model && typeof model === "object" && typeof model.model_name === "string",
+  );
 } catch {
-  // The missing-config case is already reported by the gateway config check.
+  // Reported as a failed generated-config check below.
 }
+const gatewayModelNames = new Set(gatewayModels.map((model) => model.model_name));
+const unroutable = requiredRoutedModels
+  .filter((model) => !gatewayModelNames.has(model.gatewayModel))
+  .map((model) => model.slug);
 add(
   unroutable.length ? "fail" : "ok",
   "Catalog matches gateway routes",
@@ -301,10 +342,18 @@ add(
   "Change per-model visibility in the desktop Models settings.",
 );
 add(
-  existsSync(LITELLM_CONFIG_PATH) ? "ok" : "fail",
+  gatewayConfigValid ? "ok" : "fail",
   "Generated gateway config",
-  LITELLM_CONFIG_PATH,
+  gatewayConfigPath,
   "Run ./bin/doctor --fix.",
+);
+const configuredGatewayBinary =
+  process.env.CODEX_ROUTER_GATEWAY_BIN || process.env.MODEL_ROUTER_GATEWAY_BIN || gatewayBinaryPath;
+add(
+  existsSync(configuredGatewayBinary) ? "ok" : "fail",
+  "Rust gateway binary",
+  configuredGatewayBinary,
+  "Run ./bin/install to build the Rust gateway.",
 );
 
 const secretMode = existsSync(INTERNAL_SECRET_PATH)
@@ -465,6 +514,17 @@ add(
       ? "not serving; the background service is following Codex"
       : `not ready on 127.0.0.1:${PORTS.router} after ${serviceLoaded ? 30 : 2} seconds; ${health.error}`,
   "Run ./bin/doctor --fix. If it still fails, create a support bundle.",
+);
+const gatewayHealth = await gatewayHealthStatus();
+add(
+  gatewayHealth.ok ? "ok" : serviceStoppedByDesign ? "warn" : "fail",
+  "Gateway backend",
+  gatewayHealth.ok
+    ? "rust"
+    : serviceStoppedByDesign
+      ? "not serving"
+      : gatewayHealth.error,
+  "Run ./bin/doctor --fix to start the Rust gateway.",
 );
 
 if (codex && catalogOk) {

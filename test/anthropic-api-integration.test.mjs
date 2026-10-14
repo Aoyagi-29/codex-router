@@ -9,15 +9,14 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
+import { gatewayBinaryPath } from "../src/gateway-config.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const litellm = path.join(
-  root,
-  ".venv",
-  process.platform === "win32" ? "Scripts" : "bin",
-  process.platform === "win32" ? "litellm.exe" : "litellm",
-);
-const enabled = process.env.MODEL_ROUTER_LITELLM_INTEGRATION === "1";
+const gatewayBinary =
+  process.env.CODEX_ROUTER_GATEWAY_BIN ||
+  process.env.MODEL_ROUTER_GATEWAY_BIN ||
+  gatewayBinaryPath;
+const enabled = process.env.MODEL_ROUTER_GATEWAY_INTEGRATION === "1";
 const INTERNAL_KEY = "anthropic-e2e-internal-service-key-with-sufficient-length";
 const CALLER_KEY = "anthropic-e2e-caller-capability-with-sufficient-length";
 const PROVIDER_KEY = "anthropic-e2e-provider-key";
@@ -60,7 +59,7 @@ async function waitForRouter(port, child, output) {
       });
       if (response.ok) return;
     } catch {
-      // LiteLLM is still starting.
+      // The gateway stack is still starting.
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
@@ -68,11 +67,11 @@ async function waitForRouter(port, child, output) {
 }
 
 test(
-  "Codex Responses reaches Anthropic Messages through the real LiteLLM adapter",
+  "Codex Responses reaches Anthropic Messages through the real Rust gateway",
   {
     skip: !enabled
-      ? "set MODEL_ROUTER_LITELLM_INTEGRATION=1 for the pinned-adapter integration test"
-      : !existsSync(litellm)
+      ? "set MODEL_ROUTER_GATEWAY_INTEGRATION=1 for the Rust gateway integration test"
+      : !existsSync(gatewayBinary)
         ? "run ./install.sh --target codex --prepare-only first"
         : false,
     timeout: 90_000,
@@ -136,6 +135,7 @@ test(
         MODEL_ROUTER_OAUTH_PORT: String(oauthPort),
         MODEL_ROUTER_API_PORT: String(apiPort),
         MODEL_ROUTER_GROK_OAUTH_PORT: String(grokOauthPort),
+        MODEL_ROUTER_GATEWAY_BIN: gatewayBinary,
         ANTHROPIC_API_BASE_URL: `http://127.0.0.1:${mockPort}/v1`,
       },
       stdio: ["ignore", "pipe", "pipe"],

@@ -6,7 +6,6 @@ import { assertCallerSecret } from "./caller-auth.mjs";
 import {
   CALLER_SECRET_PATH,
   INTERNAL_SECRET_PATH,
-  LITELLM_CONFIG_PATH,
   MERGED_CATALOG_PATH,
   PORTS,
   SOURCE_ROOT,
@@ -14,21 +13,18 @@ import {
   TARGET,
   loopback,
 } from "./paths.mjs";
-import { writeLiteLlmConfig } from "./litellm-config.mjs";
+import {
+  gatewayBinaryPath,
+  gatewayConfigPath,
+  writeGatewayConfig,
+} from "./gateway-config.mjs";
 
-const litellm =
-  process.env.MODEL_ROUTER_LITELLM_BIN ||
-  (TARGET === "codex"
-    ? process.env.CODEX_ROUTER_LITELLM_BIN || process.env.KIMI_LITELLM_BIN
-    : undefined) ||
-  path.join(
-    SOURCE_ROOT,
-    ".venv",
-    process.platform === "win32" ? "Scripts" : "bin",
-    process.platform === "win32" ? "litellm.exe" : "litellm",
-  );
-if (!existsSync(litellm)) {
-  throw new Error(`LiteLLM is not installed at ${litellm}; run ./bin/install.`);
+const gatewayBinary =
+  process.env.CODEX_ROUTER_GATEWAY_BIN ||
+  process.env.MODEL_ROUTER_GATEWAY_BIN ||
+  gatewayBinaryPath;
+if (!existsSync(gatewayBinary)) {
+  throw new Error(`Rust gateway binary is not installed at ${gatewayBinary}; run ./bin/install.`);
 }
 if (!existsSync(INTERNAL_SECRET_PATH)) {
   throw new Error(`Internal service key is missing; run ./bin/install.`);
@@ -41,7 +37,7 @@ if (!internalKey) throw new Error("Internal service key is empty.");
 const callerKey = assertCallerSecret(
   readFileSync(CALLER_SECRET_PATH, "utf8").trim(),
 );
-writeLiteLlmConfig();
+writeGatewayConfig();
 
 const commonEnv = {
   MODEL_ROUTER_TARGET: TARGET,
@@ -74,9 +70,6 @@ const commonEnv = {
   CODEX_ROUTER_API_PORT: String(PORTS.api),
   CODEX_ROUTER_GATEWAY_PORT: String(PORTS.gateway),
   CODEX_ROUTER_PORT: String(PORTS.router),
-  LITELLM_MASTER_KEY: internalKey,
-  LITELLM_LOG: "ERROR",
-  LITELLM_TELEMETRY: "False",
   NO_COLOR: "1",
 };
 
@@ -159,23 +152,20 @@ async function main() {
     Authorization: `Bearer ${internalKey}`,
   }, 30_000, undefined, grokForwarder);
 
-  const gateway = run(litellm, [
+  const gateway = run(gatewayBinary, [
     "--config",
-    LITELLM_CONFIG_PATH,
+    gatewayConfigPath,
     "--host",
     "127.0.0.1",
     "--port",
     String(PORTS.gateway),
   ]);
-  // LiteLLM cold starts can take minutes when launchd starves the job under
-  // system load; killing it mid-import restarts the import from scratch and
-  // the service loops forever, so wait long enough for a starved import.
   await waitForHealth(
-    "LiteLLM gateway",
+    "Rust gateway",
     loopback(PORTS.gateway, "/health/liveliness"),
     { Authorization: `Bearer ${internalKey}` },
-    300_000,
-    undefined,
+    30_000,
+    "codex-router-gateway",
     gateway,
   );
 
@@ -196,7 +186,7 @@ async function main() {
     waitForExit(kimiForwarder, "OAuth forwarder"),
     waitForExit(api, "API forwarder"),
     waitForExit(grokForwarder, "Grok OAuth forwarder"),
-    waitForExit(gateway, "LiteLLM gateway"),
+    waitForExit(gateway, "Rust gateway"),
     waitForExit(router, frontend.label),
   ]);
   if (!shuttingDown) {

@@ -18,8 +18,8 @@ user.
 
 ## Codex procedure
 
-1. Read the host platform and check for Codex, Git, Node.js 22.19+, and `uv` or
-   Python 3.10+. Read-only checks are allowed. Do not install a package manager
+1. Read the host platform and check for Codex, Git, Node.js 22.19+, and a Rust
+   toolchain with `cargo`. Read-only checks are allowed. Do not install a package manager
    or system runtime without the user's permission.
 2. Use a stable checkout: `~/.local/share/codex-router` on macOS/Linux, or
    `%LOCALAPPDATA%\codex-router` on Windows. Do not install the service from a
@@ -64,12 +64,12 @@ user.
    catalog, caller capability, internal key, service, router health, and
    selected credentials must be `OK`. Unselected credentials may be `WARN`.
 9. If a managed layer fails, use `model-router codex doctor --fix`; add
-   `--migrate-known` only for a recognized older installation. Repair rebuilds
-   the Node and Python dependencies unconditionally, unlike a normal install or
-   update, which skips whichever dependency step already matches its
-   fingerprint. Force that rebuild by hand with `bin/install --force-deps`
-   (`./install.ps1 -CheckoutInstall -ForceDeps`) when an environment looks
-   corrupted rather than merely out of date. If repair still fails, create
+   `--migrate-known` only for a recognized older installation. Repair reruns the
+   Node dependency installation and the locked Rust build. Normal installs skip
+   unchanged Node dependencies, and Cargo reuses unchanged Rust artifacts. Force
+   Node dependency reinstallation with `bin/install --force-deps`
+   (`./install.ps1 -CheckoutInstall -ForceDeps`) when the Node environment looks
+   corrupted. If repair still fails, create
    `bin/support-bundle` and report its path without uploading it.
 10. Do not terminate Codex. Tell the user to fully quit it, reopen it, create a
     new task, and choose the new model.

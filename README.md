@@ -55,7 +55,7 @@ Requirements:
 
 - The Codex App or CLI.
 - Node.js 22.19 or newer; Node.js 24 LTS is recommended.
-- `uv`, or Python 3.10+ with `venv`.
+- Rust toolchain with `cargo` for the local gateway build; runtime use does not require Python.
 - Git for the managed one-command checkout and rollback.
 
 Linux installations support the Codex CLI.
@@ -562,7 +562,7 @@ and GitHub build-provenance attestations.
 
 ```mermaid
 flowchart LR
-  C["Codex Responses :4102"] --> L1["LiteLLM :4100"]
+  C["Codex Responses :4102"] --> L1["Rust Responses gateway :4100"]
   L1 --> K1["Kimi OAuth :4101"]
   L1 --> A1["API keys :4103"]
   K1 --> P["External providers"]
@@ -570,12 +570,14 @@ flowchart LR
 ```
 
 Codex sends the Responses API.
-LiteLLM translates that contract to each provider's native protocol,
+The Rust Responses gateway translates that contract to each provider's native protocol,
 including OpenAI-compatible Chat Completions and Anthropic Messages, with
 streaming and tool-call shapes preserved. Every listener binds to `127.0.0.1`.
+See the [Rust gateway implementation notes](rust/gateway/README.md) for its
+configuration and protocol details.
 
 The router authenticates the caller before reading model traffic and
-passes only a random internal key to LiteLLM. The final forwarder discards
+passes only a random internal key to the Rust gateway. The final forwarder discards
 that key and injects only the selected provider credential. Browser-originated
 requests are rejected, secrets are never exposed by public health routes, and
 network-facing errors are sanitized.

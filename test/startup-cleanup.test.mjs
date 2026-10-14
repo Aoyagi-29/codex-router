@@ -53,7 +53,8 @@ test("startup failure terminates services that already became healthy", { timeou
       MODEL_ROUTER_OAUTH_PORT: String(oauthPort),
       MODEL_ROUTER_API_PORT: String(apiPort),
       MODEL_ROUTER_GROK_OAUTH_PORT: String(grokOauthPort),
-      MODEL_ROUTER_LITELLM_BIN: process.execPath,
+      CODEX_ROUTER_GATEWAY_BIN: process.execPath,
+      MODEL_ROUTER_GATEWAY_BIN: process.execPath,
     },
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -76,7 +77,7 @@ test("startup failure terminates services that already became healthy", { timeou
     assert.match(errors, /\[model-router\] startup failed/);
     assert.match(
       errors,
-      /startup failed: LiteLLM gateway exited before becoming healthy\./,
+      /startup failed: Rust gateway exited before becoming healthy\./,
     );
     assert.doesNotMatch(errors, /startup-internal-key-with-sufficient-length/);
     assert.doesNotMatch(errors, /startup-caller-key-with-sufficient-length/);
